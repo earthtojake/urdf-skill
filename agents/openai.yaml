@@ -1,0 +1,4 @@
+interface:
+  display_name: "URDF"
+  short_description: "Generate and validate explicit robot URDF outputs."
+  default_prompt: "Use $urdf to generate, update, and validate explicit URDF files from Python sources, including robot links, joints, limits, and mesh references without assuming a harness root."
