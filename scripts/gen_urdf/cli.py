@@ -3,10 +3,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import inspect
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import PurePosixPath
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from urdf_source import UrdfSourceError, read_urdf_source
 
@@ -116,6 +120,24 @@ def _write_urdf_payload(envelope: dict[str, object], *, output_path: Path, scrip
     text = xml if xml.endswith("\n") else xml + "\n"
     output_path.write_text(text, encoding="utf-8")
     print(f"Wrote URDF: {output_path}")
+    _write_explorer_metadata_payload(envelope, output_path=output_path, script_path=script_path)
+
+
+def _write_explorer_metadata_payload(envelope: dict[str, object], *, output_path: Path, script_path: Path) -> None:
+    if "explorer_metadata" not in envelope or envelope.get("explorer_metadata") is None:
+        return
+    explorer_metadata = envelope.get("explorer_metadata")
+    if not isinstance(explorer_metadata, dict):
+        raise TypeError(
+            f"{_display_path(script_path)} gen_urdf() envelope field 'explorer_metadata' must be an object, "
+            f"got {type(explorer_metadata).__name__}"
+        )
+    explorer_dir = output_path.parent / f".{output_path.name}"
+    explorer_dir.mkdir(parents=True, exist_ok=True)
+    explorer_metadata_path = explorer_dir / "explorer.json"
+    text = json.dumps(explorer_metadata, indent=2, sort_keys=True)
+    explorer_metadata_path.write_text(text + "\n", encoding="utf-8")
+    print(f"Wrote URDF explorer metadata: {explorer_metadata_path}")
 
 
 def _print_summaries(paths: Sequence[Path]) -> None:
@@ -137,3 +159,7 @@ def _display_path(path: Path) -> str:
         return resolved.relative_to(Path.cwd().resolve()).as_posix()
     except ValueError:
         return resolved.as_posix()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

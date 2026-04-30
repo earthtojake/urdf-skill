@@ -6,8 +6,9 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 URDF_SUFFIX = ".urdf"
-SUPPORTED_JOINT_TYPES = {"fixed", "continuous", "revolute"}
+SUPPORTED_JOINT_TYPES = {"fixed", "continuous", "revolute", "prismatic"}
 SUPPORTED_MESH_SUFFIXES = {".stl"}
+SUPPORTED_COLLISION_PRIMITIVES = {"box", "cylinder", "sphere"}
 
 
 class UrdfSourceError(ValueError):
@@ -33,6 +34,8 @@ class UrdfSource:
     links: tuple[str, ...]
     joints: tuple[UrdfJoint, ...]
     mesh_paths: tuple[Path, ...]
+    visual_mesh_paths: tuple[Path, ...] = ()
+    collision_mesh_paths: tuple[Path, ...] = ()
 
 
 def file_ref_from_urdf_path(urdf_path: Path) -> str:
@@ -68,31 +71,27 @@ def read_urdf_source(urdf_path: Path) -> UrdfSource:
         raise UrdfSourceError(f"{_relative_to_repo(resolved_path)} must define at least one link")
     _raise_on_duplicates(link_names, source_path=resolved_path, label="link")
     link_name_set = set(link_names)
+    _validate_link_inertials(root, source_path=resolved_path)
 
-    mesh_paths: list[Path] = []
+    visual_mesh_paths: list[Path] = []
+    collision_mesh_paths: list[Path] = []
     for link_element in root.findall("link"):
-        for visual_element in link_element.findall("visual"):
-            geometry_element = visual_element.find("geometry")
-            if geometry_element is None:
-                continue
-            mesh_element = geometry_element.find("mesh")
-            if mesh_element is None:
-                raise UrdfSourceError(
-                    f"{_relative_to_repo(resolved_path)} only mesh visual geometry is supported"
-                )
-            filename = str(mesh_element.attrib.get("filename") or "").strip()
-            if not filename:
-                raise UrdfSourceError(f"{_relative_to_repo(resolved_path)} mesh filename is required")
-            mesh_path = _resolve_mesh_path(filename, source_path=resolved_path)
-            if mesh_path.suffix.lower() not in SUPPORTED_MESH_SUFFIXES:
-                raise UrdfSourceError(
-                    f"{_relative_to_repo(resolved_path)} only STL mesh geometry is supported: {filename!r}"
-                )
-            if not mesh_path.is_file():
-                raise UrdfSourceError(
-                    f"{_relative_to_repo(resolved_path)} references missing mesh file: {filename!r}"
-                )
-            mesh_paths.append(mesh_path)
+        visual_mesh_paths.extend(
+            _geometry_mesh_paths(
+                link_element,
+                element_name="visual",
+                source_path=resolved_path,
+                require_mesh=True,
+            )
+        )
+        collision_mesh_paths.extend(
+            _geometry_mesh_paths(
+                link_element,
+                element_name="collision",
+                source_path=resolved_path,
+                require_mesh=False,
+            )
+        )
 
     joints = []
     joint_names = []
@@ -186,8 +185,171 @@ def read_urdf_source(urdf_path: Path) -> UrdfSource:
         root_link=root_link,
         links=tuple(link_names),
         joints=tuple(joints),
-        mesh_paths=tuple(mesh_paths),
+        mesh_paths=tuple(visual_mesh_paths + collision_mesh_paths),
+        visual_mesh_paths=tuple(visual_mesh_paths),
+        collision_mesh_paths=tuple(collision_mesh_paths),
     )
+
+
+def _validate_link_inertials(root: ET.Element, *, source_path: Path) -> None:
+    for link_element in root.findall("link"):
+        link_name = str(link_element.attrib.get("name") or "").strip()
+        inertial_element = link_element.find("inertial")
+        if inertial_element is None:
+            continue
+        mass_element = inertial_element.find("mass")
+        if mass_element is None:
+            raise UrdfSourceError(
+                f"{_relative_to_repo(source_path)} link {link_name!r} inertial requires <mass>"
+            )
+        mass = _required_float_attr(
+            mass_element,
+            "value",
+            source_path=source_path,
+            label=f"link {link_name!r} inertial mass",
+        )
+        if mass <= 0.0:
+            raise UrdfSourceError(
+                f"{_relative_to_repo(source_path)} link {link_name!r} inertial mass must be positive"
+            )
+
+        inertia_element = inertial_element.find("inertia")
+        if inertia_element is None:
+            raise UrdfSourceError(
+                f"{_relative_to_repo(source_path)} link {link_name!r} inertial requires <inertia>"
+            )
+        ixx = _required_float_attr(
+            inertia_element,
+            "ixx",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia ixx",
+        )
+        ixy = _required_float_attr(
+            inertia_element,
+            "ixy",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia ixy",
+        )
+        ixz = _required_float_attr(
+            inertia_element,
+            "ixz",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia ixz",
+        )
+        iyy = _required_float_attr(
+            inertia_element,
+            "iyy",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia iyy",
+        )
+        iyz = _required_float_attr(
+            inertia_element,
+            "iyz",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia iyz",
+        )
+        izz = _required_float_attr(
+            inertia_element,
+            "izz",
+            source_path=source_path,
+            label=f"link {link_name!r} inertia izz",
+        )
+        _validate_inertia_values(
+            link_name,
+            ixx=ixx,
+            ixy=ixy,
+            ixz=ixz,
+            iyy=iyy,
+            iyz=iyz,
+            izz=izz,
+            source_path=source_path,
+        )
+
+
+def _required_float_attr(
+    element: ET.Element,
+    attr_name: str,
+    *,
+    source_path: Path,
+    label: str,
+) -> float:
+    try:
+        value = element.attrib[attr_name]
+    except KeyError as exc:
+        raise UrdfSourceError(
+            f"{_relative_to_repo(source_path)} {label} requires {attr_name!r}"
+        ) from exc
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise UrdfSourceError(f"{_relative_to_repo(source_path)} {label} is invalid") from exc
+
+
+def _validate_inertia_values(
+    link_name: str,
+    *,
+    ixx: float,
+    ixy: float,
+    ixz: float,
+    iyy: float,
+    iyz: float,
+    izz: float,
+    source_path: Path,
+) -> None:
+    del ixy, ixz, iyz
+    if ixx <= 0.0 or iyy <= 0.0 or izz <= 0.0:
+        raise UrdfSourceError(
+            f"{_relative_to_repo(source_path)} link {link_name!r} inertia diagonal values must be positive"
+        )
+    tolerance = 1e-12
+    if ixx + iyy + tolerance < izz or ixx + izz + tolerance < iyy or iyy + izz + tolerance < ixx:
+        raise UrdfSourceError(
+            f"{_relative_to_repo(source_path)} link {link_name!r} inertia violates triangle inequalities"
+        )
+
+
+def _geometry_mesh_paths(
+    link_element: ET.Element,
+    *,
+    element_name: str,
+    source_path: Path,
+    require_mesh: bool,
+) -> list[Path]:
+    mesh_paths: list[Path] = []
+    for geometry_owner in link_element.findall(element_name):
+        geometry_element = geometry_owner.find("geometry")
+        if geometry_element is None:
+            continue
+        mesh_element = geometry_element.find("mesh")
+        if mesh_element is None:
+            if require_mesh:
+                raise UrdfSourceError(
+                    f"{_relative_to_repo(source_path)} only mesh {element_name} geometry is supported"
+                )
+            if not any(geometry_element.find(tag) is not None for tag in SUPPORTED_COLLISION_PRIMITIVES):
+                supported = ", ".join(sorted((*SUPPORTED_COLLISION_PRIMITIVES, "mesh")))
+                raise UrdfSourceError(
+                    f"{_relative_to_repo(source_path)} {element_name} geometry must use one of: {supported}"
+                )
+            continue
+        mesh_paths.append(_validated_mesh_path(mesh_element, source_path=source_path))
+    return mesh_paths
+
+
+def _validated_mesh_path(mesh_element: ET.Element, *, source_path: Path) -> Path:
+    filename = str(mesh_element.attrib.get("filename") or "").strip()
+    if not filename:
+        raise UrdfSourceError(f"{_relative_to_repo(source_path)} mesh filename is required")
+    mesh_path = _resolve_mesh_path(filename, source_path=source_path)
+    if mesh_path.suffix.lower() not in SUPPORTED_MESH_SUFFIXES:
+        raise UrdfSourceError(
+            f"{_relative_to_repo(source_path)} only STL mesh geometry is supported: {filename!r}"
+        )
+    if not mesh_path.is_file():
+        raise UrdfSourceError(
+            f"{_relative_to_repo(source_path)} references missing mesh file: {filename!r}"
+        )
+    return mesh_path
 
 
 def _validate_with_yourdfpy(source_path: Path) -> None:
@@ -196,7 +358,7 @@ def _validate_with_yourdfpy(source_path: Path) -> None:
     except ModuleNotFoundError as exc:
         raise UrdfSourceError(
             f"{_relative_to_repo(source_path)} requires yourdfpy for URDF validation; "
-            "install it in the CAD Python environment"
+            "install it in the active Python environment"
         ) from exc
 
     try:
@@ -231,19 +393,21 @@ def _joint_limits_deg(
     limit_element = joint_element.find("limit")
     if limit_element is None:
         raise UrdfSourceError(
-            f"{_relative_to_repo(source_path)} revolute joint {joint_element.attrib.get('name', '')!r} requires <limit>"
+            f"{_relative_to_repo(source_path)} {joint_type} joint {joint_element.attrib.get('name', '')!r} requires <limit>"
         )
     try:
         lower = float(limit_element.attrib["lower"])
         upper = float(limit_element.attrib["upper"])
     except KeyError as exc:
         raise UrdfSourceError(
-            f"{_relative_to_repo(source_path)} revolute joint {joint_element.attrib.get('name', '')!r} requires lower and upper limits"
+            f"{_relative_to_repo(source_path)} {joint_type} joint {joint_element.attrib.get('name', '')!r} requires lower and upper limits"
         ) from exc
     except ValueError as exc:
         raise UrdfSourceError(
-            f"{_relative_to_repo(source_path)} revolute joint {joint_element.attrib.get('name', '')!r} has invalid limits"
+            f"{_relative_to_repo(source_path)} {joint_type} joint {joint_element.attrib.get('name', '')!r} has invalid limits"
         ) from exc
+    if joint_type == "prismatic":
+        return lower, upper
     return degrees(lower), degrees(upper)
 
 

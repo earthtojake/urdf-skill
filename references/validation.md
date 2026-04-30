@@ -24,22 +24,37 @@ Supported joint types are:
 - `fixed`
 - `continuous`
 - `revolute`
+- `prismatic`
 
-For revolute joints, validate lower and upper limits. Confirm axes and origins match the intended kinematic behavior.
+For revolute and prismatic joints, validate lower and upper limits. Confirm axes and origins match the intended kinematic behavior.
+
+## Inertial Checks
+
+For each physical link with mass or geometry, prefer an explicit `inertial` block:
+
+- `origin` is the center of mass in the link frame
+- `mass` is positive
+- `inertia` defines `ixx`, `ixy`, `ixz`, `iyy`, `iyz`, and `izz`
+- diagonal inertia values are positive
+- inertia values satisfy basic triangle inequalities
+
+Frame-only links may intentionally omit `inertial`.
 
 ## Mesh Checks
 
-Validate that visual mesh references:
+Validate that visual and collision mesh references:
 
 - are non-empty
 - point to supported mesh formats
 - resolve from the generated URDF location or package URI convention
 - refer to files that exist
 
-If mesh references changed, confirm the corresponding CAD/STL outputs were regenerated separately.
+Collision geometry may also use supported URDF primitives such as box, cylinder, or sphere. Prefer simplified collision geometry over detailed visual meshes when the URDF is intended for physics simulation.
+
+If mesh references changed, confirm the corresponding mesh outputs were regenerated separately.
 
 ## Tooling
 
-`scripts/gen_urdf --summary` prints a compact robot/link/joint summary after regeneration.
+`scripts/gen_urdf/cli.py --summary` prints a compact robot/link/joint summary after regeneration.
 
 The URDF source reader also validates XML structure with `yourdfpy`, which must be installed in the active Python environment.

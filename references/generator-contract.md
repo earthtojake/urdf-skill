@@ -12,6 +12,7 @@ The Python source that defines `gen_urdf()` is source of truth. The configured `
 
 - `xml`: complete URDF XML as a string
 - `urdf_output`: relative path to the generated `.urdf` file
+- `explorer_metadata` (optional): JSON-serializable object written to `.<urdf filename>/explorer.json` for consumer-specific metadata that should not be embedded in standard URDF XML
 
 The `urdf_output` path:
 
@@ -24,6 +25,6 @@ The host project may impose its own layout policy, but the URDF skill runtime do
 
 ## Runtime Behavior
 
-`scripts/gen_urdf` runs only `gen_urdf()`. It does not regenerate STEP, STL, GLB/topology, DXF, or CAD render artifacts.
+`scripts/gen_urdf/cli.py` runs only `gen_urdf()`. It does not regenerate external mesh, CAD, or render artifacts.
 
-If URDF mesh references depend on updated CAD outputs, regenerate those CAD targets separately with the CAD skill.
+If URDF visual or collision mesh references depend on updated mesh outputs, regenerate those targets separately with the owning project's CAD or mesh workflow.

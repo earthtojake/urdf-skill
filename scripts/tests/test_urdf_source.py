@@ -14,7 +14,7 @@ class UrdfSourceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tempdir.cleanup()
 
-    def _cad_ref(self, name: str) -> str:
+    def _file_ref(self, name: str) -> str:
         return (self.temp_root / f"{name}.urdf").resolve().as_posix()
 
     def _write_mesh(self, name: str) -> Path:
@@ -61,12 +61,130 @@ class UrdfSourceTests(unittest.TestCase):
 
         source = read_urdf_source(source_path)
 
-        self.assertEqual(self._cad_ref("robot"), source.file_ref)
+        self.assertEqual(self._file_ref("robot"), source.file_ref)
         self.assertEqual("sample-robot", source.robot_name)
         self.assertEqual("base_link", source.root_link)
         self.assertEqual(("base_link",), source.links)
         self.assertEqual(0, len(source.joints))
         self.assertEqual((mesh_path.resolve(),), source.mesh_paths)
+        self.assertEqual((mesh_path.resolve(),), source.visual_mesh_paths)
+        self.assertEqual((), source.collision_mesh_paths)
+
+    def test_read_urdf_source_accepts_collision_meshes(self) -> None:
+        visual_mesh_path = self._write_mesh("visual")
+        collision_mesh_path = self._write_mesh("collision")
+        source_path = self._write_urdf(
+            "robot",
+            f"""
+            <robot name="sample-robot">
+              <link name="base_link">
+                <visual>
+                  <geometry>
+                    <mesh filename="{visual_mesh_path.name}" />
+                  </geometry>
+                </visual>
+                <collision>
+                  <origin xyz="0 0 0" rpy="0 0 0" />
+                  <geometry>
+                    <mesh filename="{collision_mesh_path.name}" />
+                  </geometry>
+                </collision>
+              </link>
+            </robot>
+            """,
+        )
+
+        source = read_urdf_source(source_path)
+
+        self.assertEqual(
+            (visual_mesh_path.resolve(), collision_mesh_path.resolve()),
+            source.mesh_paths,
+        )
+        self.assertEqual((visual_mesh_path.resolve(),), source.visual_mesh_paths)
+        self.assertEqual((collision_mesh_path.resolve(),), source.collision_mesh_paths)
+
+    def test_read_urdf_source_accepts_primitive_collision_geometry(self) -> None:
+        visual_mesh_path = self._write_mesh("visual")
+        source_path = self._write_urdf(
+            "robot",
+            f"""
+            <robot name="sample-robot">
+              <link name="base_link">
+                <visual>
+                  <geometry>
+                    <mesh filename="{visual_mesh_path.name}" />
+                  </geometry>
+                </visual>
+                <collision>
+                  <geometry>
+                    <box size="0.1 0.2 0.3" />
+                  </geometry>
+                </collision>
+              </link>
+            </robot>
+            """,
+        )
+
+        source = read_urdf_source(source_path)
+
+        self.assertEqual((visual_mesh_path.resolve(),), source.mesh_paths)
+        self.assertEqual((), source.collision_mesh_paths)
+
+    def test_read_urdf_source_accepts_valid_inertial(self) -> None:
+        source_path = self._write_urdf(
+            "robot",
+            """
+            <robot name="sample-robot">
+              <link name="base_link">
+                <inertial>
+                  <origin xyz="0 0 0" rpy="0 0 0" />
+                  <mass value="1.2" />
+                  <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1" />
+                </inertial>
+              </link>
+            </robot>
+            """,
+        )
+
+        source = read_urdf_source(source_path)
+
+        self.assertEqual(("base_link",), source.links)
+
+    def test_read_urdf_source_rejects_nonpositive_inertial_mass(self) -> None:
+        source_path = self._write_urdf(
+            "robot",
+            """
+            <robot name="sample-robot">
+              <link name="base_link">
+                <inertial>
+                  <mass value="0" />
+                  <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1" />
+                </inertial>
+              </link>
+            </robot>
+            """,
+        )
+
+        with self.assertRaisesRegex(UrdfSourceError, "mass must be positive"):
+            read_urdf_source(source_path)
+
+    def test_read_urdf_source_rejects_invalid_inertia_triangle(self) -> None:
+        source_path = self._write_urdf(
+            "robot",
+            """
+            <robot name="sample-robot">
+              <link name="base_link">
+                <inertial>
+                  <mass value="1" />
+                  <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="1" />
+                </inertial>
+              </link>
+            </robot>
+            """,
+        )
+
+        with self.assertRaisesRegex(UrdfSourceError, "triangle"):
+            read_urdf_source(source_path)
 
     def test_read_urdf_source_validates_with_yourdfpy_without_loading_meshes(self) -> None:
         source_path = self._write_urdf(
@@ -149,7 +267,26 @@ class UrdfSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(UrdfSourceError, "missing mesh file"):
             read_urdf_source(source_path)
 
-    def test_read_urdf_source_rejects_unsupported_joint_type(self) -> None:
+    def test_read_urdf_source_rejects_missing_collision_mesh(self) -> None:
+        source_path = self._write_urdf(
+            "robot",
+            """
+            <robot name="sample-robot">
+              <link name="base_link">
+                <collision>
+                  <geometry>
+                    <mesh filename="does-not-exist.stl" />
+                  </geometry>
+                </collision>
+              </link>
+            </robot>
+            """,
+        )
+
+        with self.assertRaisesRegex(UrdfSourceError, "missing mesh file"):
+            read_urdf_source(source_path)
+
+    def test_read_urdf_source_accepts_prismatic_joint_with_limits(self) -> None:
         mesh_path = self._write_mesh("base")
         source_path = self._write_urdf(
             "robot",
@@ -164,6 +301,35 @@ class UrdfSourceTests(unittest.TestCase):
               </link>
               <link name="arm_link" />
               <joint name="base_to_arm" type="prismatic">
+                <parent link="base_link" />
+                <child link="arm_link" />
+                <limit lower="0" upper="0.05" effort="1" velocity="1" />
+              </joint>
+            </robot>
+            """,
+        )
+
+        source = read_urdf_source(source_path)
+
+        self.assertEqual("prismatic", source.joints[0].joint_type)
+        self.assertEqual(0.0, source.joints[0].min_value_deg)
+        self.assertEqual(0.05, source.joints[0].max_value_deg)
+
+    def test_read_urdf_source_rejects_unsupported_joint_type(self) -> None:
+        mesh_path = self._write_mesh("base")
+        source_path = self._write_urdf(
+            "robot",
+            f"""
+            <robot name="sample-robot">
+              <link name="base_link">
+                <visual>
+                  <geometry>
+                    <mesh filename="{mesh_path.name}" />
+                  </geometry>
+                </visual>
+              </link>
+              <link name="arm_link" />
+              <joint name="base_to_arm" type="planar">
                 <parent link="base_link" />
                 <child link="arm_link" />
               </joint>
