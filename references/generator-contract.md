@@ -25,6 +25,6 @@ The host project may impose its own layout policy, but the URDF skill runtime do
 
 ## Runtime Behavior
 
-`scripts/gen_urdf/cli.py` runs only `gen_urdf()`. It does not regenerate external mesh, CAD, or render artifacts.
+`scripts/gen_urdf/cli.py` runs only `gen_urdf()`. It does not regenerate external CAD, mesh/export, GLB/topology, or render artifacts.
 
-If URDF visual or collision mesh references depend on updated mesh outputs, regenerate those targets separately with the owning project's CAD or mesh workflow.
+If URDF visual or collision mesh references depend on updated CAD or mesh outputs, regenerate those explicit targets separately with the owning CAD or mesh workflow.

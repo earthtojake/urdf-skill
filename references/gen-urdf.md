@@ -11,4 +11,4 @@ Targets must be explicit generated Python source files whose `gen_urdf()` return
 
 Relative targets resolve from the current working directory.
 
-This tool runs only `gen_urdf()` and does not regenerate mesh, CAD, or render outputs.
+This tool runs only `gen_urdf()` and does not regenerate CAD, mesh/export, GLB/topology, or render outputs.

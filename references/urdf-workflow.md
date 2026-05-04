@@ -11,7 +11,7 @@ Use this reference when editing robot description structure, mesh references, or
 5. Keep visual and collision mesh references tied to the source assembly or instance payload when the project uses generated assembly meshes.
 6. Regenerate only the explicit URDF target with `scripts/gen_urdf/cli.py <source-file>`.
 7. Use `--summary` for a compact robot/link/joint check.
-8. If mesh outputs changed, regenerate affected mesh/render assets with the owning project's mesh workflow.
+8. If mesh outputs changed, regenerate only the affected explicit outputs with the owning CAD or mesh workflow.
 
 ## Standard Link Tags
 
